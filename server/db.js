@@ -1,4 +1,4 @@
-const { Pool } = require('pg');
+const {Pool} = require('pg');
 require('dotenv').config();
 
 const pool = new Pool({
@@ -7,7 +7,7 @@ const pool = new Pool({
 });
 
 pool.on('connect', () => {
-  console.log('🔗 Connected to Docker PostgreSQL');
+  console.log('Connected to Docker PostgreSQL');
 });
 
 module.exports = {
