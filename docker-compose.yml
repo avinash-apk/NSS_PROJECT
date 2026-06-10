@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: project_postgres_db
+    environment:
+      POSTGRES_USER: project_admin
+      POSTGRES_PASSWORD: securepassword123
+      POSTGRES_DB: project_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - project_pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  project_pgdata:

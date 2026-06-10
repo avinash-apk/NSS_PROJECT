@@ -1,0 +1,5 @@
+Make sure you have git node.js docker desktop (for windows user)
+Clone the repository with git clone 
+navigate to the project and then run npm install 
+To run the project(frontend+backend) use npm run dev and to run the postgresql use 
+docker-compose up -d
