@@ -1,18 +1,48 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import {useState,useEffect} from 'react';
 
-export default function AdminPortal() {
-  const [issues, setIssues] = useState([]);
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+
+interface Issue {
+  id: number;
+  title: string;
+  description: string;
+  ward_id: number;
+  ward_name?: string;
+  category: string;
+  status: string;
+  sla_deadline: string;
+  created_at: string;
+}
+
+export default function AdminPortal(){
+  const [issues, setIssues] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);
+  const [token, setToken] = useState('');
+  const [authError, setAuthError] = useState('');
 
   useEffect(() => {
-    fetchIssues();
+    // Auto-fetch a dev token on mount
+    const getToken = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/mock-login`, { method: 'POST' });
+        const data = await res.json();
+        setToken(data.token);
+      } catch (err) {
+        setAuthError('Could not connect to server for authentication.');
+      }
+    };
+    getToken();
   }, []);
+
+  useEffect(() => {
+    if (token) fetchIssues();
+  }, [token]);
 
   const fetchIssues = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/issues');
+      const res = await fetch(`${API_URL}/api/issues`);
       const data = await res.json();
       setIssues(data);
     } catch (err) {
@@ -24,12 +54,20 @@ export default function AdminPortal() {
 
   const updateStatus = async (id: number, status: string) => {
     try {
-      const res = await fetch(`http://localhost:5000/api/issues/${id}`, {
+      const res = await fetch(`${API_URL}/api/issues/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, resolution_proof_url: 'https://via.placeholder.com/300?text=Resolved' }),
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status }),
       });
       if (res.ok) fetchIssues();
+      else {
+        const errorData = await res.json();
+        console.error('Failed to update:', errorData.error);
+        alert(`Update failed: ${errorData.error}`);
+      }
     } catch (err) {
       console.error('Error updating status:', err);
     }
@@ -37,12 +75,23 @@ export default function AdminPortal() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      case 'in-progress': return 'bg-blue-100 text-blue-800';
+      case 'open': return 'bg-yellow-100 text-yellow-800';
+      case 'in_progress': return 'bg-blue-100 text-blue-800';
       case 'resolved': return 'bg-green-100 text-green-800';
       case 'escalated': return 'bg-red-100 text-red-800';
+      case 'duplicate': return 'bg-gray-100 text-gray-800';
       default: return 'bg-zinc-100 text-zinc-800';
     }
+  };
+
+  const getSlaStatus = (deadline: string) => {
+    const now = new Date();
+    const sla = new Date(deadline);
+    const diff = sla.getTime() - now.getTime();
+    if (diff < 0) return { label: 'BREACHED', color: 'text-red-600 font-bold' };
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    if (hours < 6) return { label: `${hours}h left`, color: 'text-orange-500 font-semibold' };
+    return { label: `${hours}h left`, color: 'text-zinc-500' };
   };
 
   return (
@@ -55,6 +104,10 @@ export default function AdminPortal() {
           </p>
         </div>
       </div>
+
+      {authError && (
+        <div className="mb-6 p-4 rounded-md bg-red-50 text-red-800 text-sm">{authError}</div>
+      )}
 
       <div className="mt-8 flex flex-col">
         <div className="-my-2 -mx-4 overflow-x-auto sm:-mx-6 lg:-mx-8">
@@ -74,25 +127,28 @@ export default function AdminPortal() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800 bg-white dark:bg-black">
-                  {issues.map((issue: any) => (
+                  {issues.map((issue: any) => {
+                    const sla = getSlaStatus(issue.sla_deadline);
+                    return (
                     <tr key={issue.id}>
                       <td className="whitespace-nowrap px-3 py-4 text-sm">
                         <div className="font-medium text-zinc-900 dark:text-white">{issue.title}</div>
                         <div className="text-zinc-500 truncate max-w-xs">{issue.description}</div>
                       </td>
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-zinc-500 dark:text-zinc-400">
-                        {issue.ward_name}
+                        {issue.ward_name || `Ward ${issue.ward_id}`}
                       </td>
                       <td className="whitespace-nowrap px-3 py-4 text-sm text-zinc-500 dark:text-zinc-400 capitalize">
-                        {issue.category}
+                        {issue.category.replace('-', ' ')}
                       </td>
                       <td className="whitespace-nowrap px-3 py-4 text-sm">
                         <span className={`inline-flex rounded-full px-2 text-xs font-semibold leading-5 ${getStatusColor(issue.status)}`}>
-                          {issue.status}
+                          {issue.status.replace('_', ' ')}
                         </span>
                       </td>
-                      <td className="whitespace-nowrap px-3 py-4 text-sm text-zinc-500 dark:text-zinc-400">
-                        {new Date(issue.sla_deadline).toLocaleString()}
+                      <td className="whitespace-nowrap px-3 py-4 text-sm">
+                        <span className={sla.color}>{sla.label}</span>
+                        <div className="text-xs text-zinc-400">{new Date(issue.sla_deadline).toLocaleString()}</div>
                       </td>
                       <td className="whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
                         <select 
@@ -100,14 +156,16 @@ export default function AdminPortal() {
                           value={issue.status}
                           onChange={(e) => updateStatus(issue.id, e.target.value)}
                         >
-                          <option value="pending">Pending</option>
-                          <option value="in-progress">In-Progress</option>
+                          <option value="open">Open</option>
+                          <option value="in_progress">In-Progress</option>
                           <option value="resolved">Resolved</option>
                           <option value="escalated">Escalated</option>
+                          <option value="duplicate">Duplicate</option>
                         </select>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                   {issues.length === 0 && !loading && (
                     <tr>
                       <td colSpan={6} className="text-center py-10 text-zinc-500">No issues reported yet.</td>
