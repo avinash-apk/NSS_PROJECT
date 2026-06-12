@@ -10,6 +10,10 @@ interface Ward {
   pincode: string;
 }
 
+interface ZodValidationError {
+  message: string;
+}
+
 export default function ReportIssue() {
   const [wards, setWards] = useState<Ward[]>([]);
   const [formData, setFormData] = useState({
@@ -69,10 +73,8 @@ export default function ReportIssue() {
     const payload = {
       ...formData,
       ward_id: parseInt(formData.ward_id, 10),
-      ...(formData.has_citizen_consent && {
-        consent_timestamp: new Date().toISOString(),
-        privacy_policy_version: 'v1.0'
-      })
+      consent_timestamp: formData.has_citizen_consent ? new Date().toISOString() : null,
+      privacy_policy_version: 'v1.0'
     };
     try{
       const res = await fetch(`${API_URL}/api/issues`, {
@@ -97,11 +99,11 @@ export default function ReportIssue() {
       }
       else{
         const errorMsg = data.details 
-          ? data.details.map((err: any) => err.message).join(', ') 
+          ? data.details.map((err: ZodValidationError) => err.message).join(', ') 
           : data.error;
         setMessage('Error: ' + (errorMsg || 'Something went wrong'));
       }
-    } catch (err) {
+    } catch {
       setMessage('Failed to submit. Is the server running?');
     } finally {
       setLoading(false);

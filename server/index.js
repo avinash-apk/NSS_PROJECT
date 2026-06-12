@@ -144,27 +144,47 @@ app.post('/api/issues', async (req, res) => {
 });
 
 // Update issue status (Admin) — with audit trail
-app.patch('/api/issues/:id',authenticate, async (req, res) => {
+app.patch('/api/issues/:id', authenticate, async (req, res) => {
   const { id } = req.params;
   try {
     const validated = updateSchema.parse(req.body);
     const current = await db.query('SELECT status FROM issues WHERE id = $1', [id]);
     if (current.rows.length === 0) return res.status(404).json({ error: 'Issue not found' });
+    
     const previousStatus = current.rows[0].status;
-    const result = await db.query(
-      'UPDATE issues SET status = $1,resolution_proof_url = $2,updated_at = CURRENT_TIMESTAMP WHERE id = $3 RETURNING *',
-      [validated.status,validated.resolution_proof_url || null,id]
-    );
+    const updateQuery = `
+      UPDATE issues 
+      SET status = $1, 
+          resolution_proof_url = $2, 
+          parent_issue_id = $3,
+          updated_at = CURRENT_TIMESTAMP 
+      WHERE id = $4 
+      RETURNING *
+    `;
+    const result = await db.query(updateQuery, [
+      validated.status,
+      validated.resolution_proof_url || null,
+      validated.parent_issue_id !== undefined ? validated.parent_issue_id : null,
+      id
+    ]);
+
     await db.query(
       'INSERT INTO issue_logs (issue_id, previous_status, new_status, action_by, remarks) VALUES ($1, $2, $3, $4, $5)',
-      [id, previousStatus, validated.status, req.user.email || 'admin', `Status changed from ${previousStatus} to ${validated.status}`]
+      [
+        id, 
+        previousStatus, 
+        validated.status, 
+        req.user.email || 'admin', 
+        `Status changed from ${previousStatus} to ${validated.status}${validated.parent_issue_id ? ` (Linked to #${validated.parent_issue_id})` : ''}`
+      ]
     );
     res.json(result.rows[0]);
   } catch (err) {
     if(err instanceof z.ZodError){
-      return res.status(400).json({error: "Validation failed",details: err.errors});
+      return res.status(400).json({error: "Validation failed", details: err.errors});
     }
-    res.status(500).json({ error: err.message });
+    console.error("Error updating issue:", err.message);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 

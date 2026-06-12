@@ -1,6 +1,6 @@
 'use client';
 
-import {useState,useEffect} from 'react';
+import {useState, useEffect, useCallback} from 'react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -21,6 +21,11 @@ export default function AdminPortal(){
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState('');
   const [authError, setAuthError] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const refreshIssues = useCallback(() => {
+    setRefreshKey(prev => prev + 1);
+  }, []);
 
   useEffect(() => {
     // Auto-fetch a dev token on mount
@@ -29,7 +34,7 @@ export default function AdminPortal(){
         const res = await fetch(`${API_URL}/api/mock-login`, { method: 'POST' });
         const data = await res.json();
         setToken(data.token);
-      } catch (err) {
+      } catch {
         setAuthError('Could not connect to server for authentication.');
       }
     };
@@ -37,22 +42,31 @@ export default function AdminPortal(){
   }, []);
 
   useEffect(() => {
-    if (token) fetchIssues();
-  }, [token]);
+    if (!token) return;
 
-  const fetchIssues = async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/issues`);
-      const data = await res.json();
-      setIssues(data);
-    } catch (err) {
-      console.error('Error fetching issues:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+    let isMounted = true;
+    const fetchIssues = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/issues`);
+        if (!res.ok) throw new Error('Failed to fetch issues');
+        const data = await res.json();
+        if (isMounted) {
+          setIssues(data);
+          setLoading(false);
+        }
+      } catch (err) {
+        if (isMounted) {
+          console.error('Error fetching issues:', err);
+          setLoading(false);
+        }
+      }
+    };
 
-  const updateStatus = async (id: number, status: string) => {
+    fetchIssues();
+    return () => { isMounted = false; };
+  }, [token, refreshKey]);
+
+  const updateStatus = async (id: number, status: string, parentIssueId?: number) => {
     try {
       const res = await fetch(`${API_URL}/api/issues/${id}`, {
         method: 'PATCH',
@@ -60,16 +74,28 @@ export default function AdminPortal(){
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status, parent_issue_id: parentIssueId }),
       });
-      if (res.ok) fetchIssues();
-      else {
+      if (res.ok) {
+        refreshIssues();
+      } else {
         const errorData = await res.json();
         console.error('Failed to update:', errorData.error);
         alert(`Update failed: ${errorData.error}`);
       }
     } catch (err) {
       console.error('Error updating status:', err);
+    }
+  };
+
+  const handleStatusChange = (id: number, newStatus: string) => {
+    if (newStatus === 'duplicate') {
+      const parentId = prompt('Enter the ID of the original issue:');
+      if (parentId) {
+        updateStatus(id, newStatus, parseInt(parentId, 10));
+      }
+    } else {
+      updateStatus(id, newStatus);
     }
   };
 
@@ -127,7 +153,7 @@ export default function AdminPortal(){
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800 bg-white dark:bg-black">
-                  {issues.map((issue: any) => {
+                  {issues.map((issue) => {
                     const sla = getSlaStatus(issue.sla_deadline);
                     return (
                     <tr key={issue.id}>
@@ -154,7 +180,7 @@ export default function AdminPortal(){
                         <select 
                           className="bg-transparent border border-zinc-300 rounded text-xs p-1"
                           value={issue.status}
-                          onChange={(e) => updateStatus(issue.id, e.target.value)}
+                          onChange={(e) => handleStatusChange(issue.id, e.target.value)}
                         >
                           <option value="open">Open</option>
                           <option value="in_progress">In-Progress</option>

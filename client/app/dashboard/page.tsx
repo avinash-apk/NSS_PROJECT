@@ -22,22 +22,33 @@ interface Issue {
   created_at: string;
 }
 
+interface DashboardStats {
+  total: number;
+  open: number;
+  resolved: number;
+  sla_breached: number;
+}
+
 export default function PublicDashboard() {
   const [issues, setIssues] = useState<Issue[]>([]);
   const [wards, setWards] = useState<Ward[]>([]);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [issuesRes, wardsRes] = await Promise.all([
+        const [issuesRes, wardsRes, statsRes] = await Promise.all([
           fetch(`${API_URL}/api/issues`),
-          fetch(`${API_URL}/api/wards`)
+          fetch(`${API_URL}/api/wards`),
+          fetch(`${API_URL}/api/stats`)
         ]);
         const issuesData = await issuesRes.json();
         const wardsData = await wardsRes.json();
+        const statsData = await statsRes.json();
         setIssues(issuesData);
         setWards(wardsData);
+        setStats(statsData);
       } catch (err) {
         console.error('Error fetching data:', err);
       } finally {
@@ -48,8 +59,8 @@ export default function PublicDashboard() {
   }, []);
 
   const getWardStats = (wardId: number) => {
-    const wardIssues = issues.filter((i: any) => i.ward_id === wardId);
-    const resolved = wardIssues.filter((i: any) => i.status === 'resolved').length;
+    const wardIssues = issues.filter((i) => i.ward_id === wardId);
+    const resolved = wardIssues.filter((i) => i.status === 'resolved').length;
     return {
       total: wardIssues.length,
       resolved: resolved,
@@ -57,11 +68,7 @@ export default function PublicDashboard() {
     };
   };
 
-  const totalIssues = issues.length;
-  const openIssues = issues.filter((i: any) => i.status === 'open').length;
-  const resolvedIssues = issues.filter((i: any) => i.status === 'resolved').length;
-  const escalatedIssues = issues.filter((i: any) => i.status === 'escalated').length;
-  const breachedIssues = issues.filter((i: any) => new Date(i.sla_deadline) < new Date() && i.status !== 'resolved' && i.status !== 'duplicate').length;
+  if (loading) return <div className="p-12 text-center text-zinc-500">Loading dashboard...</div>;
 
   return (
     <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
@@ -72,26 +79,26 @@ export default function PublicDashboard() {
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-12">
         <div className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <p className="text-sm text-zinc-500">Total Issues</p>
-          <p className="text-2xl font-bold text-zinc-900 dark:text-white">{totalIssues}</p>
+          <p className="text-2xl font-bold text-zinc-900 dark:text-white">{stats?.total || 0}</p>
         </div>
         <div className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <p className="text-sm text-zinc-500">Open</p>
-          <p className="text-2xl font-bold text-yellow-600">{openIssues}</p>
+          <p className="text-2xl font-bold text-yellow-600">{stats?.open || 0}</p>
         </div>
         <div className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <p className="text-sm text-zinc-500">Resolved</p>
-          <p className="text-2xl font-bold text-green-600">{resolvedIssues}</p>
+          <p className="text-2xl font-bold text-green-600">{stats?.resolved || 0}</p>
         </div>
         <div className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <p className="text-sm text-zinc-500">SLA Breached</p>
-          <p className="text-2xl font-bold text-red-600">{breachedIssues}</p>
+          <p className="text-2xl font-bold text-red-600">{stats?.sla_breached || 0}</p>
         </div>
       </div>
 
       {/* Ward Cards */}
       <h2 className="text-2xl font-bold text-zinc-900 dark:text-white mb-6">Ward Performance</h2>
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 mb-12">
-        {wards.map((ward: any) => {
+        {wards.map((ward) => {
           const stats = getWardStats(ward.id);
           return (
             <div key={ward.id} className="bg-white dark:bg-zinc-900 overflow-hidden shadow rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -117,7 +124,7 @@ export default function PublicDashboard() {
       <h2 className="text-2xl font-bold text-zinc-900 dark:text-white mb-6">Recent Reports</h2>
       <div className="bg-white dark:bg-zinc-900 shadow overflow-hidden sm:rounded-md border border-zinc-200 dark:border-zinc-800">
         <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
-          {issues.slice(0, 10).map((issue: any) => {
+          {issues.slice(0, 10).map((issue) => {
             const isBreached = new Date(issue.sla_deadline) < new Date() && issue.status !== 'resolved' && issue.status !== 'duplicate';
             return (
             <li key={issue.id}>
