@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const {z} = require('zod');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 require('dotenv').config();
 const rateLimit = require('express-rate-limit');
 const db = require('./db');
@@ -11,26 +12,39 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.SUPABASE_JWT_SECRET || 'fallback_12345';
 
-app.use(helmet());//Mitigates XSS (Security Feature)
+// Password hashing helper
+const hashPassword = (password) => {
+  return crypto.createHash('sha256').update(password).digest('hex');
+};
+
+app.use(helmet());
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
   credentials: true
 }));
-app.use(express.json({limit: '10kb'}));//Reduce massive payload coming from user
+app.use(express.json({limit: '10kb'}));
 
-//Rate limiting
 const limiter = rateLimit({
-  windowMs: 15*60*1000, // 15 minutes
-  max: 100,//100 requests per 15 minutes for one ip
+  windowMs: 15*60*1000, 
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
   message: {error:'Too many requests from this IP, please try again after 15 minutes'}
 });
 
-// Apply rate limiting to all requests
 app.use(limiter);
 
-//zod validation allows only normal data and not malicious data 
+const registerSchema = z.object({
+  name: z.string().min(2),
+  email: z.string().email(),
+  password: z.string().min(6)
+});
+
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string()
+});
+
 const issueSchema = z.object({
   title: z.string().min(3).max(255),
   description: z.string().min(10).max(2000),
@@ -44,7 +58,8 @@ const issueSchema = z.object({
 
 const updateSchema = z.object({
   status: z.enum(['open','in_progress','resolved','escalated','duplicate']),
-  resolution_proof_url: z.string().url().optional().or(z.literal('').optional())
+  resolution_proof_url: z.string().url().optional().or(z.literal('').optional()),
+  parent_issue_id: z.number().optional().nullable()
 });
 
 const authenticate = (req,res,next) => {
@@ -60,9 +75,16 @@ const authenticate = (req,res,next) => {
   catch(error){
     return res.status(401).json({error: "Invalid or expired session token"});
   }
-}
+};
 
-// SLA logic per issue type (in hours)
+const isAdmin = (req, res, next) => {
+  if (req.user && req.user.role === 'admin') {
+    next();
+  } else {
+    res.status(403).json({ error: "Access Denied: Admins only." });
+  }
+};
+
 const SLA_CONFIG = {
   'sanitation': 24,
   'infrastructure': 72,
@@ -74,17 +96,47 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'PROJECT Backend Active', timestamp: new Date() });
 });
 
-// Dev-only mock login endpoint — generates a valid JWT for testing
-app.post('/api/mock-login', (req, res) => {
-  const token = jwt.sign(
-    {id: 1, role: 'admin', email: 'admin@civicconnect.dev' },
-    JWT_SECRET,
-    {expiresIn: '24h'}
-  );
-  res.json({ token, message: 'Dev token issued. Use in Authorization: Bearer <token> header.' });
+// Real Auth Endpoints
+app.post('/api/register', async (req, res) => {
+  try {
+    const { name, email, password } = registerSchema.parse(req.body);
+    const hashedPassword = hashPassword(password);
+    
+    const result = await db.query(
+      'INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
+      [name, email, hashedPassword, 'admin']
+    );
+    
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ error: 'Email already registered' });
+    if (err instanceof z.ZodError) return res.status(400).json({ error: 'Validation failed', details: err.errors });
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// Get all wards
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = loginSchema.parse(req.body);
+    const hashedPassword = hashPassword(password);
+    
+    const result = await db.query('SELECT * FROM users WHERE email = $1 AND password = $2', [email, hashedPassword]);
+    if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid email or password' });
+    
+    const user = result.rows[0];
+    const token = jwt.sign(
+      { id: user.id, role: user.role, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+  } catch (err) {
+    if (err instanceof z.ZodError) return res.status(400).json({ error: 'Validation failed', details: err.errors });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/wards', async (req, res) => {
   try {
     const result = await db.query('SELECT * FROM wards ORDER BY name');
@@ -94,7 +146,6 @@ app.get('/api/wards', async (req, res) => {
   }
 });
 
-// Get all issues (with ward name)
 app.get('/api/issues', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 50;
@@ -115,7 +166,17 @@ app.get('/api/issues', async (req, res) => {
 app.post('/api/issues', async (req, res) => {
   try{
     const validated = issueSchema.parse(req.body);
-    // Calculate SLA deadline
+    
+    // Duplicate Check
+    const existing = await db.query(
+      'SELECT id FROM issues WHERE title = $1 AND ward_id = $2 AND status NOT IN (\'resolved\', \'duplicate\')',
+      [validated.title, validated.ward_id]
+    );
+    
+    if (existing.rows.length > 0) {
+      return res.status(409).json({ error: 'This issue has already been reported and is currently active.' });
+    }
+
     const slaHours = SLA_CONFIG[validated.category] || 48;
     const slaDeadline = new Date();
     slaDeadline.setHours(slaDeadline.getHours() + slaHours);
@@ -143,8 +204,43 @@ app.post('/api/issues', async (req, res) => {
   }
 });
 
-// Update issue status (Admin) — with audit trail
-app.patch('/api/issues/:id', authenticate, async (req, res) => {
+// Escalate issue (Citizen) - Only after 1 day
+app.post('/api/issues/:id/escalate', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await db.query('SELECT created_at, status FROM issues WHERE id = $1', [id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Issue not found' });
+    
+    const issue = result.rows[0];
+    const createdAt = new Date(issue.created_at);
+    const now = new Date();
+    const oneDayInMs = 24 * 60 * 60 * 1000;
+    
+    if (now.getTime() - createdAt.getTime() < oneDayInMs) {
+      return res.status(400).json({ error: 'You can only escalate an issue 24 hours after it was reported.' });
+    }
+    
+    if (issue.status === 'resolved' || issue.status === 'escalated') {
+      return res.status(400).json({ error: `Issue is already ${issue.status}.` });
+    }
+    
+    await db.query(
+      'UPDATE issues SET status = $1, is_escalated_by_citizen = TRUE, citizen_escalation_date = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      ['escalated', id]
+    );
+    
+    await db.query(
+      'INSERT INTO issue_logs (issue_id, previous_status, new_status, action_by, remarks) VALUES ($1, $2, $3, $4, $5)',
+      [id, issue.status, 'escalated', 'CITIZEN', 'Manually escalated by citizen']
+    );
+    
+    res.json({ message: 'Issue escalated successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/issues/:id', authenticate, isAdmin, async (req, res) => {
   const { id } = req.params;
   try {
     const validated = updateSchema.parse(req.body);

@@ -8,6 +8,15 @@ CREATE TABLE IF NOT EXISTS wards (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    role VARCHAR(20) DEFAULT 'admin', -- 'admin'
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 2. ISSUES TABLE (Hardened with Duplicate Links & DPDP Consent metrics)
 CREATE TABLE IF NOT EXISTS issues (
     id SERIAL PRIMARY KEY,
@@ -26,6 +35,8 @@ CREATE TABLE IF NOT EXISTS issues (
     has_citizen_consent BOOLEAN DEFAULT FALSE,
     consent_timestamp TIMESTAMP,
     privacy_policy_version VARCHAR(10) DEFAULT 'v1.0',
+    is_escalated_by_citizen BOOLEAN DEFAULT FALSE,
+    citizen_escalation_date TIMESTAMP,
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
