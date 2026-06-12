@@ -45,8 +45,14 @@ export default function AdminPortal(){
     const fetchIssues = async () => {
       try {
         const res = await fetch(`${API_URL}/api/issues`);
-        if (!res.ok) throw new Error('Failed to fetch issues');
-        const data = await res.json();
+        const text = await res.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          throw new Error(`Server returned HTML instead of JSON (Status ${res.status}). First 50 chars: ${text.substring(0, 50)}`);
+        }
+
         if (isMounted) {
           setIssues(data);
           setLoading(false);
@@ -73,15 +79,24 @@ export default function AdminPortal(){
         },
         body: JSON.stringify({ status, parent_issue_id: parentIssueId }),
       });
+
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        throw new Error(`Server returned HTML instead of JSON (Status ${res.status}). First 50 chars: ${text.substring(0, 50)}`);
+      }
+
       if (res.ok) {
         refreshIssues();
       } else {
-        const errorData = await res.json();
-        console.error('Failed to update:', errorData.error);
-        alert(`Update failed: ${errorData.error}`);
+        console.error('Failed to update:', data.error);
+        alert(`Update failed: ${data.error}`);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error updating status:', err);
+      alert('Error updating status: ' + err.message);
     }
   };
 

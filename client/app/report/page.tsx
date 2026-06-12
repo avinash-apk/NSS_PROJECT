@@ -82,7 +82,15 @@ export default function ReportIssue() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
+
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        throw new Error(`Server returned HTML instead of JSON (Status ${res.status}). First 50 chars: ${text.substring(0, 50)}`);
+      }
+
       if(res.ok){
         setMessage('Issue reported successfully! Tracking ID: ' + data.issue.id);
         setFormData({

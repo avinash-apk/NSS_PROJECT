@@ -110,7 +110,11 @@ app.post('/api/register', async (req, res) => {
     res.status(201).json(result.rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(400).json({ error: 'Email already registered' });
-    if (err instanceof z.ZodError) return res.status(400).json({ error: 'Validation failed', details: err.errors });
+    if (err instanceof z.ZodError) {
+      const issues = err.issues || err.errors || [];
+      const errorMsg = issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+      return res.status(400).json({ error: `Validation failed: ${errorMsg}`, details: issues });
+    }
     res.status(500).json({ error: err.message });
   }
 });
@@ -132,7 +136,11 @@ app.post('/api/login', async (req, res) => {
     
     res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: 'Validation failed', details: err.errors });
+    if (err instanceof z.ZodError) {
+      const issues = err.issues || err.errors || [];
+      const errorMsg = issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+      return res.status(400).json({ error: `Validation failed: ${errorMsg}`, details: issues });
+    }
     res.status(500).json({ error: err.message });
   }
 });
@@ -197,7 +205,9 @@ app.post('/api/issues', async (req, res) => {
   }
   catch(err){
     if(err instanceof z.ZodError){
-      return res.status(400).json({error: "Validation failed",details: err.errors});
+      const issues = err.issues || err.errors || [];
+      const errorMsg = issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+      return res.status(400).json({error: `Validation failed: ${errorMsg}`, details: issues});
     }
     console.error("Error serving issue:",err.message);
     res.status(500).json({error: "Internal Server Error"})
@@ -277,7 +287,9 @@ app.patch('/api/issues/:id', authenticate, isAdmin, async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     if(err instanceof z.ZodError){
-      return res.status(400).json({error: "Validation failed", details: err.errors});
+      const issues = err.issues || err.errors || [];
+      const errorMsg = issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+      return res.status(400).json({error: `Validation failed: ${errorMsg}`, details: issues});
     }
     console.error("Error updating issue:", err.message);
     res.status(500).json({ error: "Internal Server Error" });

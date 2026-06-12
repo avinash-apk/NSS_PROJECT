@@ -24,14 +24,21 @@ export default function Register() {
         body: JSON.stringify(formData),
       });
 
-      const data = await res.json();
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        throw new Error(`Server returned HTML instead of JSON (Status ${res.status}). First 50 chars: ${text.substring(0, 50)}`);
+      }
+
       if (res.ok) {
         router.push('/login');
       } else {
         setError(data.error || 'Registration failed');
       }
-    } catch (err) {
-      setError('Could not connect to server');
+    } catch (err: any) {
+      setError('Could not connect to server: ' + (err.message || 'Unknown error'));
     } finally {
       setLoading(false);
     }

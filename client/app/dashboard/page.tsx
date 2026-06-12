@@ -43,12 +43,14 @@ export default function PublicDashboard() {
           fetch(`${API_URL}/api/wards`),
           fetch(`${API_URL}/api/stats`)
         ]);
-        const issuesData = await issuesRes.json();
-        const wardsData = await wardsRes.json();
-        const statsData = await statsRes.json();
-        setIssues(issuesData);
-        setWards(wardsData);
-        setStats(statsData);
+
+        const issuesText = await issuesRes.text();
+        const wardsText = await wardsRes.text();
+        const statsText = await statsRes.text();
+
+        setIssues(JSON.parse(issuesText));
+        setWards(JSON.parse(wardsText));
+        setStats(JSON.parse(statsText));
       } catch (err) {
         console.error('Error fetching data:', err);
       } finally {
@@ -137,15 +139,22 @@ export default function PublicDashboard() {
               if (!confirm('Are you sure you want to escalate this issue?')) return;
               try {
                 const res = await fetch(`${API_URL}/api/issues/${id}/escalate`, { method: 'POST' });
-                const data = await res.json();
+                const text = await res.text();
+                let data;
+                try {
+                  data = JSON.parse(text);
+                } catch (e) {
+                  throw new Error(`Server returned HTML instead of JSON (Status ${res.status}). First 50 chars: ${text.substring(0, 50)}`);
+                }
+
                 if (res.ok) {
                   alert('Issue escalated successfully!');
                   window.location.reload();
                 } else {
                   alert(data.error);
                 }
-              } catch (err) {
-                alert('Failed to escalate. Please try again.');
+              } catch (err: any) {
+                alert('Failed to escalate: ' + err.message);
               }
             };
 
