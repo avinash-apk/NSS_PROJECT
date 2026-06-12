@@ -1,6 +1,7 @@
 'use client';
 
 import {useState, useEffect, useCallback} from 'react';
+import { useRouter } from 'next/navigation';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -22,24 +23,20 @@ export default function AdminPortal(){
   const [token, setToken] = useState('');
   const [authError, setAuthError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+  const router = useRouter();
 
   const refreshIssues = useCallback(() => {
     setRefreshKey(prev => prev + 1);
   }, []);
 
   useEffect(() => {
-    // Auto-fetch a dev token on mount
-    const getToken = async () => {
-      try {
-        const res = await fetch(`${API_URL}/api/mock-login`, { method: 'POST' });
-        const data = await res.json();
-        setToken(data.token);
-      } catch {
-        setAuthError('Could not connect to server for authentication.');
-      }
-    };
-    getToken();
-  }, []);
+    const savedToken = localStorage.getItem('token');
+    if (!savedToken) {
+      router.push('/login');
+    } else {
+      setToken(savedToken);
+    }
+  }, [router]);
 
   useEffect(() => {
     if (!token) return;

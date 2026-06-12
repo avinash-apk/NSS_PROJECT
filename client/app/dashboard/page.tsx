@@ -126,12 +126,46 @@ export default function PublicDashboard() {
         <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {issues.slice(0, 10).map((issue) => {
             const isBreached = new Date(issue.sla_deadline) < new Date() && issue.status !== 'resolved' && issue.status !== 'duplicate';
+            const isEscalatable = () => {
+              const createdAt = new Date(issue.created_at);
+              const now = new Date();
+              const diff = now.getTime() - createdAt.getTime();
+              return diff > 24 * 60 * 60 * 1000 && issue.status !== 'resolved' && issue.status !== 'escalated' && issue.status !== 'duplicate';
+            };
+
+            const handleEscalate = async (id: number) => {
+              if (!confirm('Are you sure you want to escalate this issue?')) return;
+              try {
+                const res = await fetch(`${API_URL}/api/issues/${id}/escalate`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                  alert('Issue escalated successfully!');
+                  window.location.reload();
+                } else {
+                  alert(data.error);
+                }
+              } catch (err) {
+                alert('Failed to escalate. Please try again.');
+              }
+            };
+
             return (
             <li key={issue.id}>
               <div className={`px-4 py-4 sm:px-6 ${isBreached ? 'border-l-4 border-red-500' : ''}`}>
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-blue-600 truncate">{issue.title}</p>
-                  <div className="ml-2 flex-shrink-0 flex gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-blue-600 truncate">{issue.title}</p>
+                    <p className="text-xs text-zinc-400">ID: #{issue.id}</p>
+                  </div>
+                  <div className="ml-2 flex-shrink-0 flex gap-2 items-center">
+                    {isEscalatable() && (
+                      <button 
+                        onClick={() => handleEscalate(issue.id)}
+                        className="px-2 py-1 text-xs font-medium text-white bg-orange-600 hover:bg-orange-700 rounded transition-colors"
+                      >
+                        Escalate
+                      </button>
+                    )}
                     {isBreached && (
                       <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
                         SLA BREACHED

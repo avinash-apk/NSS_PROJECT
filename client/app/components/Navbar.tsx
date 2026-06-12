@@ -1,10 +1,24 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
 
 export default function Navbar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  useEffect(() => {
+    setIsLoggedIn(!!localStorage.getItem('token'));
+  }, [pathname]);
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setIsLoggedIn(false);
+    router.push('/');
+  };
 
   const navLinks = [
     { name: 'Report Issue', href: '/report' },
@@ -35,6 +49,23 @@ export default function Navbar() {
                 </Link>
               ))}
             </div>
+          </div>
+          <div className="flex items-center">
+            {isLoggedIn ? (
+              <button
+                onClick={handleLogout}
+                className="ml-4 px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700"
+              >
+                Logout
+              </button>
+            ) : (
+              <Link
+                href="/login"
+                className="ml-4 px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+              >
+                Admin Login
+              </Link>
+            )}
           </div>
         </div>
       </div>
