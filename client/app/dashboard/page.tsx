@@ -1,16 +1,13 @@
 'use client';
-
-import { useState, useEffect } from 'react';
-
+import {useState,useEffect,useMemo } from 'react';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
-interface Ward {
+interface Ward{
   id: number;
   name: string;
   pincode: string;
 }
-
-interface Issue {
+interface Issue{
   id: number;
   title: string;
   description: string;
@@ -21,20 +18,18 @@ interface Issue {
   sla_deadline: string;
   created_at: string;
 }
-
-interface DashboardStats {
+interface DashboardStats{
   total: number;
   open: number;
   resolved: number;
   sla_breached: number;
 }
-
-export default function PublicDashboard() {
+export default function PublicDashboard(){
   const [issues, setIssues] = useState<Issue[]>([]);
   const [wards, setWards] = useState<Ward[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
-
+  const [error, setError] = useState('');
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -43,16 +38,19 @@ export default function PublicDashboard() {
           fetch(`${API_URL}/api/wards`),
           fetch(`${API_URL}/api/stats`)
         ]);
-
-        const issuesText = await issuesRes.text();
-        const wardsText = await wardsRes.text();
-        const statsText = await statsRes.text();
-
-        setIssues(JSON.parse(issuesText));
-        setWards(JSON.parse(wardsText));
-        setStats(JSON.parse(statsText));
-      } catch (err) {
+        // Guard against HTML error pages (e.g., 502 Bad Gateway)
+        if (!issuesRes.ok || !wardsRes.ok || !statsRes.ok) {
+          throw new Error('One or more API endpoints returned an error.');
+        }
+        const issuesData = await issuesRes.json();
+        const wardsData = await wardsRes.json();
+        const statsData = await statsRes.json();
+        setIssues(issuesData);
+        setWards(wardsData);
+        setStats(statsData);
+      } catch (err: any) {
         console.error('Error fetching data:', err);
+        setError('Failed to load dashboard data. Please try again later.');
       } finally {
         setLoading(false);
       }
@@ -60,17 +58,22 @@ export default function PublicDashboard() {
     fetchData();
   }, []);
 
-  const getWardStats = (wardId: number) => {
-    const wardIssues = issues.filter((i) => i.ward_id === wardId);
-    const resolved = wardIssues.filter((i) => i.status === 'resolved').length;
-    return {
-      total: wardIssues.length,
-      resolved: resolved,
-      percentage: wardIssues.length > 0 ? Math.round((resolved / wardIssues.length) * 100) : 0
-    };
-  };
-
+  // Reducing the complexity from O(n^2) to O(n)
+  const wardStatsMap = useMemo(() => {
+    const map: Record<number, { total: number; resolved: number }> = {};
+    wards.forEach(w => map[w.id] = { total: 0, resolved: 0 });
+    issues.forEach(issue => {
+      if (!map[issue.ward_id]) return;
+      map[issue.ward_id].total += 1;
+      if (issue.status === 'resolved') {
+        map[issue.ward_id].resolved += 1;
+      }
+    });
+    return map;
+  }, [issues, wards]);
+  
   if (loading) return <div className="p-12 text-center text-zinc-500">Loading dashboard...</div>;
+  if (error) return <div className="p-12 text-center text-red-500">{error}</div>;
 
   return (
     <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
@@ -101,19 +104,21 @@ export default function PublicDashboard() {
       <h2 className="text-2xl font-bold text-zinc-900 dark:text-white mb-6">Ward Performance</h2>
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 mb-12">
         {wards.map((ward) => {
-          const stats = getWardStats(ward.id);
+          const stats = wardStatsMap[ward.id] || { total: 0, resolved: 0 };
+          const percentage = stats.total > 0 ? Math.round((stats.resolved / stats.total) * 100) : 0;
+          
           return (
             <div key={ward.id} className="bg-white dark:bg-zinc-900 overflow-hidden shadow rounded-lg border border-zinc-200 dark:border-zinc-800">
               <div className="px-4 py-5 sm:p-6">
                 <dt className="text-sm font-medium text-zinc-500 truncate">{ward.name}</dt>
-                <dd className="mt-1 text-3xl font-semibold text-zinc-900 dark:text-white">{stats.percentage}% Resolved</dd>
+                <dd className="mt-1 text-3xl font-semibold text-zinc-900 dark:text-white">{percentage}% Resolved</dd>
                 <div className="mt-4 flex items-center text-sm text-zinc-500">
                   <span className="font-bold mr-2 text-zinc-900 dark:text-white">{stats.resolved} / {stats.total}</span> Issues Closed
                 </div>
                 <div className="mt-4 w-full bg-zinc-200 dark:bg-zinc-700 rounded-full h-2">
                   <div 
                     className="bg-blue-600 h-2 rounded-full transition-all duration-500" 
-                    style={{ width: `${stats.percentage}%` }}
+                    style={{ width: `${percentage}%` }}
                   ></div>
                 </div>
               </div>
@@ -128,6 +133,7 @@ export default function PublicDashboard() {
         <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {issues.slice(0, 10).map((issue) => {
             const isBreached = new Date(issue.sla_deadline) < new Date() && issue.status !== 'resolved' && issue.status !== 'duplicate';
+            
             const isEscalatable = () => {
               const createdAt = new Date(issue.created_at);
               const now = new Date();
@@ -136,22 +142,32 @@ export default function PublicDashboard() {
             };
 
             const handleEscalate = async (id: number) => {
-              if (!confirm('Are you sure you want to escalate this issue?')) return;
+              const email = prompt('To prevent spam, please enter the email address you used to report this issue:');
+              if (email === null) return; 
+              if (email.trim() === '') {
+                alert('Email is required to escalate an issue.');
+                return;
+              }
               try {
-                const res = await fetch(`${API_URL}/api/issues/${id}/escalate`, { method: 'POST' });
+                const res = await fetch(`${API_URL}/api/issues/${id}/escalate`, { 
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ email: email.trim() })
+                });
                 const text = await res.text();
                 let data;
                 try {
                   data = JSON.parse(text);
                 } catch (e) {
-                  throw new Error(`Server returned HTML instead of JSON (Status ${res.status}). First 50 chars: ${text.substring(0, 50)}`);
+                  throw new Error(`Server returned HTML instead of JSON. First 50 chars: ${text.substring(0, 50)}`);
                 }
 
                 if (res.ok) {
                   alert('Issue escalated successfully!');
-                  window.location.reload();
+                  // Optimistic UI update instead of a full page reload
+                  setIssues(prev => prev.map(i => i.id === id ? { ...i, status: 'escalated' } : i));
                 } else {
-                  alert(data.error);
+                  alert(data.error || 'Failed to escalate issue.');
                 }
               } catch (err: any) {
                 alert('Failed to escalate: ' + err.message);
@@ -181,7 +197,7 @@ export default function PublicDashboard() {
                       </span>
                     )}
                     <p className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${issue.status === 'resolved' ? 'bg-green-100 text-green-800' : issue.status === 'escalated' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                      {issue.status}
+                      {issue.status.replace('_', ' ')}
                     </p>
                   </div>
                 </div>
@@ -191,7 +207,7 @@ export default function PublicDashboard() {
                       Ward: {issue.ward_name}
                     </p>
                     <p className="mt-2 flex items-center text-sm text-zinc-500 dark:text-zinc-400 sm:mt-0 sm:ml-6 capitalize">
-                      {issue.category}
+                      {issue.category.replace('-', ' ')}
                     </p>
                   </div>
                   <div className="mt-2 flex items-center text-sm text-zinc-500 dark:text-zinc-400 sm:mt-0">

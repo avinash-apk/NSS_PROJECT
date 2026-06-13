@@ -1,6 +1,6 @@
 'use client';
 
-import {useState, useEffect, useCallback} from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
@@ -17,13 +17,14 @@ interface Issue {
   created_at: string;
 }
 
-export default function AdminPortal(){
+export default function AdminPortal() {
   const [issues, setIssues] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState('');
   const [authError, setAuthError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
   const router = useRouter();
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
   const refreshIssues = useCallback(() => {
     setRefreshKey(prev => prev + 1);
@@ -35,6 +36,7 @@ export default function AdminPortal(){
       router.push('/login');
     } else {
       setToken(savedToken);
+      setIsCheckingAuth(false);
     }
   }, [router]);
 
@@ -66,10 +68,19 @@ export default function AdminPortal(){
     };
 
     fetchIssues();
-    return () => { isMounted = false; };
+    const interval = setInterval(fetchIssues, 10000);
+    return () => { 
+      isMounted = false; 
+      clearInterval(interval);
+    };
   }, [token, refreshKey]);
 
   const updateStatus = async (id: number, status: string, parentIssueId?: number) => {
+    // Optimistic UI update
+    setIssues(prevIssues => prevIssues.map(issue => 
+      issue.id === id ? { ...issue, status } : issue
+    ));
+
     try {
       const res = await fetch(`${API_URL}/api/issues/${id}`, {
         method: 'PATCH',
@@ -79,22 +90,31 @@ export default function AdminPortal(){
         },
         body: JSON.stringify({ status, parent_issue_id: parentIssueId }),
       });
-
+      if(res.status === 401 || res.status === 403){
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        alert('Session expired. Please log in again.');
+        router.push('/login');
+        return;
+      }
       const text = await res.text();
       let data;
-      try {
+      try{
         data = JSON.parse(text);
-      } catch (e) {
+      }
+      catch(e){
         throw new Error(`Server returned HTML instead of JSON (Status ${res.status}). First 50 chars: ${text.substring(0, 50)}`);
       }
 
-      if (res.ok) {
+      if(!res.ok){
+        // Revert on failure
         refreshIssues();
-      } else {
         console.error('Failed to update:', data.error);
         alert(`Update failed: ${data.error}`);
       }
     } catch (err: any) {
+      // Revert on failure
+      refreshIssues();
       console.error('Error updating status:', err);
       alert('Error updating status: ' + err.message);
     }
@@ -103,8 +123,18 @@ export default function AdminPortal(){
   const handleStatusChange = (id: number, newStatus: string) => {
     if (newStatus === 'duplicate') {
       const parentId = prompt('Enter the ID of the original issue:');
-      if (parentId) {
-        updateStatus(id, newStatus, parseInt(parentId, 10));
+      // Ensure the user actually entered something
+      if (parentId !== null && parentId.trim() !== '') {
+        const parsedId = parseInt(parentId, 10);
+        // Ensure it is a valid number to prevent NaN crashes
+        if(!isNaN(parsedId)) updateStatus(id, newStatus, parsedId);
+        else{
+          alert('Please enter a valid numeric ID.');
+          refreshIssues(); // Reset dropdown visually
+        }
+      }
+      else{
+        refreshIssues(); // Reset dropdown visually
       }
     } else {
       updateStatus(id, newStatus);
@@ -131,7 +161,9 @@ export default function AdminPortal(){
     if (hours < 6) return { label: `${hours}h left`, color: 'text-orange-500 font-semibold' };
     return { label: `${hours}h left`, color: 'text-zinc-500' };
   };
-
+  if(isCheckingAuth){
+    return <div className="p-12 text-center text-zinc-500">Verifying session...</div>;
+  }
   return (
     <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
       <div className="sm:flex sm:items-center mb-8">
